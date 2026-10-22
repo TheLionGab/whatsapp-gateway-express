@@ -1,7 +1,7 @@
 {
-  "name": "whatsapp-cloud-api-node",
+  "name": "whatsapp-gateway-express",
   "version": "0.1.0",
-  "description": "MVP WhatsApp Business Cloud API (Meta) — envio de texto + webhook",
+  "description": "WhatsApp Cloud API gateway in Express and strict TypeScript: signed webhooks, authenticated sends and an injectable provider. 14 tests.",
   "type": "module",
   "packageManager": "npm@11.17.0",
   "scripts": {

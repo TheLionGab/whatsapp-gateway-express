@@ -1,78 +1,114 @@
-# whatsapp-cloud-api-node
+# WhatsApp Gateway — Express
 
-Small, tested Node.js + TypeScript service for the official
-[WhatsApp Business Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api)
-(Meta): outbound text messages and the webhook (verification + receiving).
+A TypeScript HTTP service for WhatsApp Business Cloud API webhooks and outbound
+text messages, implemented with **Express**. Signed webhooks, authenticated
+sending, validated payloads, and an injectable provider make its boundaries testable.
 
-Escrito em português abaixo; the code and tests are the documentation.
+**Node.js 22.12+ · TypeScript strict · 14 tests · Vitest + Supertest · MIT**
 
-## O que este projeto mostra
+Compare the [sibling implementation](https://github.com/TheLionGab/whatsapp-gateway-nestjs)
+for the same core routes in a different architecture. These are two implementations
+of one service. Neither has been verified against the live Meta API here.
 
-- Node 22 + TypeScript com `strict` e `noUncheckedIndexedAccess`.
-- Camadas separadas: HTTP (`src/app.ts`), contratos de entrada com Zod
-  (`src/schemas.ts`), configuração (`src/config.ts`) e o provider
-  externo (`src/services/whatsapp.ts`).
-- `fetch` entra como dependência opcional da aplicação, então a
-  integração é testada sem chamar a Meta.
-- Modo `DRY_RUN`: responde sem enviar nada, para teste local seguro.
-- Testes com Vitest e Supertest (`tests/api.test.ts`, 14 casos):
-  health, verificação de webhook válida e inválida, assinatura do webhook
-  (ausente, errada, de outro corpo), chave de envio, corpo inválido,
-  envio com `fetch` injetado, dry-run, erro do provider e validação de config e log sem token nem query.
-- Segurança: `POST /webhook` confere `X-Hub-Signature-256` (HMAC-SHA256 sobre
-  o corpo cru); `POST /messages/text` exige `Authorization: Bearer`; as
-  comparações são em tempo constante; o corpo do webhook (telefone e texto de
-  terceiros) e a query da URL (que traz o `hub.verify_token`) não vão para o
-  log, e cookie e `Authorization` saem mascarados; sem `WHATSAPP_APP_SECRET` e `SEND_API_KEY`
-  o serviço não sobe fora do dry-run.
-- CI (`.github/workflows/ci.yml`): typecheck, testes, build e um teste
-  ponta a ponta local em dry-run.
-
-## Endpoints
-
-- `GET /health` retorna `{ "status": "ok" }`.
-- `GET /webhook` responde ao desafio de verificação da Meta
-  (`hub.mode`, `hub.verify_token`, `hub.challenge`).
-- `POST /webhook` recebe eventos (assinatura obrigatória) e retorna
-  `{ "received": true }`. Assinatura inválida retorna 401.
-- `POST /messages/text` envia texto, com `Authorization: Bearer <SEND_API_KEY>`:
-  `{ "to": "5565999990000", "body": "olá" }`.
-
-Chave ausente retorna 401, corpo inválido 400 e falha do provider 502.
-
-## Rodar
+## Quick start: no Meta account required
 
 ```bash
-npm install
-npm run dev
+git clone https://github.com/TheLionGab/whatsapp-gateway-express.git
+cd whatsapp-gateway-express
+npm ci
+npm run build
+DRY_RUN=true WHATSAPP_VERIFY_TOKEN=local-demo npm start
 ```
 
-Variáveis de ambiente (em `DRY_RUN` só `WHATSAPP_VERIFY_TOKEN` é obrigatório):
+In another terminal:
 
-- `PORT` (padrão 3000)
-- `WHATSAPP_TOKEN` e `WHATSAPP_PHONE_NUMBER_ID`: credenciais do app na Meta
-- `WHATSAPP_VERIFY_TOKEN` (sempre obrigatório): texto que você inventa e cadastra no painel
-- `SEND_API_KEY`: chave que seus clientes mandam em `Authorization: Bearer`
-- `WHATSAPP_GRAPH_VERSION` (padrão `v22.0`)
-- `WHATSAPP_APP_SECRET`: valida a assinatura do webhook
-- `DRY_RUN=true`: não chama a Meta
+```bash
+curl http://localhost:3000/health
+curl -X POST http://localhost:3000/messages/text \
+  -H 'Content-Type: application/json' \
+  -d '{"to":"5565999990000","body":"local demonstration"}'
+```
 
-## Verificação
+The send response includes `providerId: "dry-run-wamid.123"`; no message is sent.
+Dry-run without an app secret or send key intentionally skips those checks.
+Outside dry-run, both are required at startup.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[HTTP request] --> B[Authentication and validation]
+    B --> C[Handler / service]
+    C --> D[Dry-run response]
+    C --> E[Injected fetch]
+    E --> F[Meta Graph API]
+```
+
+HTTP routes in `src/app.ts` compose Zod validation, security helpers,
+configuration, logging, and the provider in `src/services/whatsapp.ts`.
+`createApp` accepts a `fetchImpl` dependency, so tests exercise HTTP without Meta.
+
+## HTTP contract
+
+| Endpoint | Result | Failure |
+| --- | --- | --- |
+| `GET /health` | `{ "status": "ok", "service": "whatsapp-cloud-api-node" }` | — |
+| `GET /webhook` | Echoes `hub.challenge` with valid `hub.mode=subscribe` and `hub.verify_token`. | 403 `verify_failed` |
+| `POST /webhook` | `{ "received": true }` after raw-body signature verification when a secret is configured. | 401 `invalid_signature` |
+| `POST /messages/text` | Sends `{ "to": "5565999990000", "body": "hello", "previewUrl": false }` with `Authorization: Bearer <SEND_API_KEY>`. | 401 `unauthorized`, 400 `invalid_body`, 502 `provider_error`, or 500 `missing_credentials` |
+
+Application errors use `{ "error": { "code": "...", "message": "..." } }`;
+validation errors also include `details`. The health service identifier keeps
+its original value in both projects to preserve the existing HTTP contract.
+
+## Engineering Decisions & Test Strategy
+
+| Incorrect implementation | Decision | Regression evidence |
+| --- | --- | --- |
+| Accept a forged webhook or a signature for a different body. | Verify HMAC-SHA256 over the original bytes, using constant-time comparison. | `tests/api.test.ts` rejects missing, wrong, and other-body signatures. |
+| Allow unauthenticated outbound sends. | Check the bearer send key before validating message input. | Missing and incorrect key cases return 401. |
+| Make the test suite send real messages. | Inject `fetch` and provide a dry-run branch. | Provider request and dry-run tests use a fake provider. |
+| Leak credentials through request logs. | Redact sensitive headers and serialize URL paths without query strings. | Logging tests inspect captured output for sensitive fields. |
 
 ```bash
 npm run typecheck
 npm test
 npm run build
-npm run test:local   # sobe o servidor e exercita tudo em dry-run
+npm run test:local
 ```
 
-## Limites conhecidos
+The 14-case suite uses local HTTP and injected provider responses; it needs no
+external API after `npm ci`. Dependency installation requires network access
+unless npm's cache is already populated. The existing `test:local` script is
+a curl smoke demonstration, not an assertion-based acceptance suite.
+CI runs typecheck, tests, and build on Node 22, plus the curl smoke script.
 
-- Sem limite de taxa nem rotação de chave de envio.
-- Sem templates, mídia, fila, retry nem persistência de status.
-- Não foi testado contra a API real da Meta neste repositório: a
-  integração é coberta por `fetch` injetado.
+For development:
 
-## Licença
+```bash
+npm run dev
+```
 
-MIT.
+## Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | HTTP port, default 3000. |
+| `WHATSAPP_VERIFY_TOKEN` | Required webhook verification value, including in dry-run. |
+| `DRY_RUN` | `true` or `1` returns a local response instead of calling Meta. |
+| `WHATSAPP_APP_SECRET` | Webhook signature secret; required outside dry-run. |
+| `SEND_API_KEY` | Outbound bearer key; required outside dry-run. |
+| `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` | Provider credentials, checked when sending outside dry-run. |
+| `WHATSAPP_GRAPH_VERSION` | Graph version, default `v22.0`; this is the code default, not a claim about Meta's latest version. |
+| `LOG_LEVEL` | Log verbosity, default `info`. |
+
+## Tradeoffs and limitations
+
+Express 4 supplies its default HTML responses for unmatched routes and some
+parser errors. This implementation has no configured ESLint gate; use the
+typecheck, tests, and build commands below.
+
+No rate limiting, key rotation, templates, media, queue, retries, or persisted
+delivery state. Webhook receipt acknowledges events; it does not implement a
+business processing pipeline. Tests verify local behavior and the mocked
+provider boundary, not live Meta interoperability or production readiness.
