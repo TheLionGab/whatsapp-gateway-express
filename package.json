@@ -10,8 +10,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:local": "bash scripts/test-local.sh",
-    "lint": "node --check dist/index.js 2>/dev/null || echo 'lint: sem eslint configurado, typecheck é o gate'"
+    "test:local": "bash scripts/test-local.sh"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
