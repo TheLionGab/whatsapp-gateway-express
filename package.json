@@ -10,15 +10,14 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:local": "bash scripts/test-local.sh",
-    "lint": "node --check dist/index.js 2>/dev/null || echo 'lint: sem eslint configurado, typecheck é o gate'"
+    "test:local": "bash scripts/test-local.sh"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "pino": "^9.4.0",
     "pino-http": "^10.2.0",
-    "zod": "^3.23.8"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
